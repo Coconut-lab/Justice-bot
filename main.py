@@ -285,7 +285,7 @@ async def kick(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
 
 
 @bot.slash_command(name="밴", description="사용자를 서버에서 차단합니다.")
-async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: LogType = LogType.ALL):
+async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
