@@ -10,8 +10,8 @@ from typing import Literal, List, Dict, Tuple
 
 load_dotenv()
 
-client = AsyncIOMotorClient(os.getenv("DBCLIENT"))
-BOT_TOKEN = os.getenv("BOTTOKEN")
+client = AsyncIOMotorClient(os.getenv("TESTDBCLIENT"))
+BOT_TOKEN = os.getenv("TESTBOTTOKEN")
 db = client["Boksun_db"]
 mute_logs_collection = db['mute_logs']
 user_roles_collection = db['user_roles']
@@ -30,9 +30,9 @@ ADMIN_ROLE_ID = [789359681776648202, 1185934968636067921, 1101725365342306415]
 class LogType(str, Enum):
     ALL = "all"
     WARNING = "경고"
-    MUTE = "뮤트"
-    KICK = "킥"
-    BAN = "밴"
+    MUTE = "재갈"
+    KICK = "추방"
+    BAN = "사형"
 
 @bot.event
 async def on_ready():
@@ -46,12 +46,12 @@ class LogPaginator(disnake.ui.View):
         self.page = 0
         self.max_page = (len(logs) - 1) // 5
 
-    @disnake.ui.button(label="◀️", style=disnake.ButtonStyle.gray)
+    @disnake.ui.button(label="◀️", style=disnake.ButtonStyle.blurple)
     async def prev_page(self, button: disnake.ui.Button, inter: disnake.MessageInteraction):
         self.page = max(0, self.page - 1)
         await self.update_message(inter)
 
-    @disnake.ui.button(label="▶️", style=disnake.ButtonStyle.gray)
+    @disnake.ui.button(label="▶️", style=disnake.ButtonStyle.blurple)
     async def next_page(self, button: disnake.ui.Button, inter: disnake.MessageInteraction):
         self.page = min(self.max_page, self.page + 1)
         await self.update_message(inter)
@@ -94,9 +94,9 @@ def create_all_log_embed(member: disnake.Member, warnings: List[Dict], mutes: Li
 
     categories = [
         ("경고", warnings, disnake.Color.yellow()),
-        ("뮤트", mutes, disnake.Color.orange()),
-        ("킥", kicks, disnake.Color.red()),
-        ("밴", bans, disnake.Color.dark_red())
+        ("재갈", mutes, disnake.Color.orange()),
+        ("추방", kicks, disnake.Color.red()),
+        ("사형", bans, disnake.Color.dark_red())
     ]
 
     for category, logs, color in categories:
@@ -145,7 +145,7 @@ async def warn(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     warning_count, mute_count = await add_warning(멤버, inter.guild, 사유, inter.author)
@@ -156,13 +156,13 @@ async def warn(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
         end_time = datetime.now() + mute_duration
         await mute_user_with_reason(멤버, inter.guild, "경고 3회 누적", end_time, inter.author)
         warning_count, mute_count = await add_mute_log(멤버, inter.guild, "경고 3회 누적", end_time, inter.author)
-        response += f"\n경고 3회 누적으로 1일 뮤트 처리되었습니다."
+        response += f"\n경고 3회 누적으로 1일 재갈 처리되었습니다."
 
         if mute_count >= 3:
             kick_reason = "뮤트 3회 누적"
             await 멤버.kick(reason=kick_reason)
             await add_kick_log(멤버, kick_reason, inter.author)
-            response += f"\n뮤트 3회 누적으로 킥 처리되었습니다."
+            response += f"\n재갈 3회 누적으로 킥 처리되었습니다."
 
     await inter.followup.send(response)
 
@@ -171,7 +171,7 @@ async def remove_warning(inter: disnake.ApplicationCommandInteraction, 멤버: d
         await inter.response.defer()
 
         if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-            await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+            await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
             return
 
         warning_count = await get_warning_count(멤버.id)
@@ -195,43 +195,43 @@ async def remove_warning(inter: disnake.ApplicationCommandInteraction, 멤버: d
         new_warning_count = await get_warning_count(멤버.id)
         await inter.followup.send(f"{멤버.mention}님의 경고를 1회 삭제했습니다. 사유: {사유}\n현재 경고 수: {new_warning_count}")
 
-@bot.slash_command(name="뮤트", description="특정 사용자를 뮤트합니다.")
+@bot.slash_command(name="재갈", description="특정 사용자를 뮤트합니다.")
 async def mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 뮤트시간: str, 사유: str):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     try:
         duration = parse_duration(뮤트시간)
         if duration is None:
-            await inter.followup.send("뮤트 시간 형식이 올바르지 않습니다. 예: 1h30m, 2d, 45m", ephemeral=True)
+            await inter.followup.send("재갈 시간 형식이 올바르지 않습니다. 예: 1h30m, 2d, 45m", ephemeral=True)
             return
 
         end_time = datetime.now() + duration
         await mute_user_with_reason(멤버, inter.guild, 사유, end_time, inter.author)
         warning_count, mute_count = await add_mute_log(멤버, inter.guild, 사유, end_time, inter.author)
 
-        response = f"{멤버.mention}님을 {format_duration(duration)} 동안 뮤트했습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
+        response = f"{멤버.mention}님을 {format_duration(duration)} 동안 입을 막아놨습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
 
         if mute_count >= 3:
             kick_reason = "뮤트 3회 누적"
             await 멤버.kick(reason=kick_reason)
             await add_kick_log(멤버, kick_reason, inter.author)
-            response += f"\n뮤트 3회 누적으로 킥 처리되었습니다."
+            response += f"\n재갈 3회 누적으로 퇴출 처리되었습니다."
 
         await inter.followup.send(response)
 
     except Exception as e:
         await inter.followup.send(f"뮤트 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
-@bot.slash_command(name="뮤트해제", description="사용자의 뮤트를 해제합니다.")
+@bot.slash_command(name="재갈풀기", description="사용자의 뮤트를 해제합니다.")
 async def unmute_command(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     success = await unmute_user(멤버, inter.guild)
@@ -247,49 +247,48 @@ async def unmute_command(inter: disnake.ApplicationCommandInteraction, 멤버: d
             },
             'action': 'unmute'
         })
-        await inter.followup.send(f"{멤버.mention}님의 뮤트를 해제했습니다. 사유: {사유}")
+        await inter.followup.send(f"{멤버.mention}님의 재갈을 풀었습니다. 사유: {사유}")
     else:
-        await inter.followup.send(f"{멤버.mention}님은 뮤트 상태가 아닙니다.")
+        await inter.followup.send(f"{멤버.mention}님은 재갈 상태가 아닙니다.")
 
-@bot.slash_command(name="킥", description="사용자를 서버에서 추방합니다.")
+@bot.slash_command(name="추방", description="사용자를 서버에서 추방합니다.")
 async def kick(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     await 멤버.kick(reason=사유)
     await add_kick_log(멤버, 사유, inter.author)
     kick_count = await get_kick_count(멤버.id)
 
-    response = f"{멤버.mention}님을 서버에서 추방했습니다. 사유: {사유}\n현재 킥 횟수: {kick_count}"
+    response = f"{멤버.mention}님을 서버에서 추방했습니다. 사유: {사유}\n현재 추방 횟수: {kick_count}"
 
-    if kick_count % 3 == 0:
-        await 멤버.ban(reason="킥 3회 누적")
+    if kick_count % 2 == 0:
+        await 멤버.ban(reason="추방 2회 누적")
         await ban_logs_collection.insert_one({
             'user_id': 멤버.id,
             'username': 멤버.name,
             'guild_id': inter.guild.id,
-            'reason': "킥 3회 누적",
+            'reason': "킥 2회 누적",
             'banned_at': datetime.now(),
             'banned_by': {
                 'id': inter.author.id,
                 'name': inter.author.name
             }
         })
-        response += "\n킥 3회 누적으로 밴 처리되었습니다."
+        response += "\n추방 2회 누적으로 사형 처리되었습니다."
 
     await inter.followup.send(response)
 
 
-
-@bot.slash_command(name="밴", description="사용자를 서버에서 차단합니다.")
+@bot.slash_command(name="사형", description="사용자를 서버에서 차단합니다.")
 async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     await 멤버.ban(reason=사유)
@@ -304,7 +303,7 @@ async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
             'name': inter.author.name
         }
     })
-    await inter.followup.send(f"{멤버.mention}님을 서버에서 차단했습니다. 사유: {사유}")
+    await inter.followup.send(f"{멤버.mention}님을 사형했습니다. 사유: {사유}")
 
 
 @bot.slash_command(name="로그", description="사용자의 처벌 기록을 확인합니다.")
@@ -312,7 +311,7 @@ async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-        await inter.followup.send("이런 심부름은 저의 주인님만 시킬 수 있어유", ephemeral=True)
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
     warnings = await get_log_entries(warnings_collection, 멤버.id)
@@ -326,9 +325,9 @@ async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
     else:
         logs = {
             "경고": warnings,
-            "뮤트": mutes,
-            "킥": kicks,
-            "밴": bans
+            "재갈": mutes,
+            "추방": kicks,
+            "사형": bans
         }[종류]
 
         if not logs:
@@ -383,11 +382,11 @@ async def mute_user_with_reason(member: disnake.Member, guild: disnake.Guild, re
     try:
         mute_role = guild.get_role(MUTE_ROLE_ID)
         if not mute_role:
-            print("뮤트 역할을 찾을 수 없습니다.")
+            print("재갈 역할을 찾을 수 없습니다.")
             return
 
         if mute_role in member.roles:
-            print(f"{member}는 이미 뮤트 상태입니다.")
+            print(f"{member}는 이미 재갈 상태입니다.")
             return
 
         current_roles = [role.id for role in member.roles if role.id != guild.id and role.id != MUTE_ROLE_ID]
@@ -401,7 +400,7 @@ async def mute_user_with_reason(member: disnake.Member, guild: disnake.Guild, re
         await member.remove_roles(*roles_to_remove, reason="Mute")
         await member.add_roles(mute_role)
 
-        bot.loop.create_task(schedule_unmute(member, guild, end_time))
+        bot.loop.create_task(schedule_unmute(member, guild, end_time)) # 코루틴
 
     except disnake.Forbidden:
         print(f"봇에게 {member}를 뮤트할 권한이 없습니다.")
