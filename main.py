@@ -10,8 +10,8 @@ from typing import Literal, List, Dict, Tuple
 
 load_dotenv()
 
-client = AsyncIOMotorClient(os.getenv("TESTDBCLIENT"))
-BOT_TOKEN = os.getenv("TESTBOTTOKEN")
+client = AsyncIOMotorClient(os.getenv("DBCLIENT"))
+BOT_TOKEN = os.getenv("BOTTOKEN")
 db = client["Boksun_db"]
 mute_logs_collection = db['mute_logs']
 user_roles_collection = db['user_roles']
@@ -22,8 +22,8 @@ ban_logs_collection = db['ban_logs']
 intents = disnake.Intents.all()
 bot = commands.InteractionBot(intents=intents)
 
-# MUTE_ROLE_ID = 795147706237714433
-MUTE_ROLE_ID = 1272135394669891621  # 테스트
+MUTE_ROLE_ID = 795147706237714433
+# MUTE_ROLE_ID = 1272135394669891621  # 테스트
 ADMIN_ROLE_ID = [789359681776648202, 1185934968636067921, 1101725365342306415]
 
 
