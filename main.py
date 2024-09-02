@@ -22,8 +22,8 @@ ban_logs_collection = db['ban_logs']
 intents = disnake.Intents.all()
 bot = commands.InteractionBot(intents=intents)
 
-MUTE_ROLE_ID = 795147706237714433
-# MUTE_ROLE_ID = 1272135394669891621  # 테스트
+# MUTE_ROLE_ID = 795147706237714433
+MUTE_ROLE_ID = 1272135394669891621  # 테스트
 ADMIN_ROLE_ID = [789359681776648202, 1185934968636067921, 1101725365342306415]
 
 
@@ -124,8 +124,8 @@ async def add_kick_log(member: disnake.Member, reason: str, kicked_by: disnake.M
         }
     })
 
-async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime, muted_by: disnake.Member):
-    await mute_logs_collection.insert_one({
+async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime, muted_by: disnake.Member, count_mute: bool = True):
+    mute_log = {
         'user_id': member.id,
         'username': member.name,
         'guild_id': guild.id,
@@ -136,8 +136,9 @@ async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str
             'id': muted_by.id,
             'name': muted_by.name
         },
-        'action': 'mute'
-    })
+        'action': 'mute' if count_mute else 'temp_mute'
+    }
+    await mute_logs_collection.insert_one(mute_log)
     return await get_punishment_counts(member.id)
 
 @bot.slash_command(name="경고", description="사용자에게 경고를 줍니다.")
@@ -226,6 +227,42 @@ async def mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
     except Exception as e:
         await inter.followup.send(f"뮤트 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
+@bot.slash_command(name="경고재갈", description="특정 사용자에게 경고를 주고 뮤트합니다 (뮤트 카운트 증가 없음).")
+async def warn_and_mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 뮤트시간: str, 사유: str):
+    await inter.response.defer()
+
+    if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
+        return
+
+    try:
+        duration = parse_duration(뮤트시간)
+        if duration is None:
+            await inter.followup.send("재갈 시간 형식이 올바르지 않습니다. 예: 1h30m, 2d, 45m", ephemeral=True)
+            return
+
+        # 경고 추가
+        warning_count, mute_count = await add_warning(멤버, inter.guild, f"경고재갈: {사유}", inter.author)
+
+        # 경고 3회 누적 체크
+        if warning_count % 3 == 0:
+            duration = timedelta(days=1)  # 24시간 뮤트
+            end_time = datetime.now() + duration
+            await mute_user_with_reason(멤버, inter.guild, "경고 3회 누적", end_time, inter.author)
+            await add_mute_log(멤버, inter.guild, "경고 3회 누적", end_time, inter.author, count_mute=True)
+            response = f"{멤버.mention}님의 경고가 3회 누적되어 24시간 동안 재갈 처리되었습니다. 사유: 경고 3회 누적\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count + 1}"
+        else:
+            # 일반적인 경고재갈 처리
+            end_time = datetime.now() + duration
+            await mute_user_with_reason(멤버, inter.guild, 사유, end_time, inter.author)
+            await add_mute_log(멤버, inter.guild, 사유, end_time, inter.author, count_mute=False)
+            response = f"{멤버.mention}님에게 경고를 주고 {format_duration(duration)} 동안 재갈을 물렸습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
+
+        await inter.followup.send(response)
+
+    except Exception as e:
+        await inter.followup.send(f"경고재갈 처리 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
+
 @bot.slash_command(name="재갈풀기", description="사용자의 뮤트를 해제합니다.")
 async def unmute_command(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
@@ -307,7 +344,7 @@ async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
 
 
 @bot.slash_command(name="로그", description="사용자의 처벌 기록을 확인합니다.")
-async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 종류: Literal["전체", "경고", "뮤트", "킥", "밴"] = "전체"):
+async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 종류: Literal["전체", "경고", "재갈", "추방", "사형"] = "전체"):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
