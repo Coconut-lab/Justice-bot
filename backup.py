@@ -10,8 +10,8 @@ from typing import Literal, List, Dict, Tuple
 
 load_dotenv()
 
-client = AsyncIOMotorClient(os.getenv("TESTDBCLIENT"))
-BOT_TOKEN = os.getenv("TESTBOTTOKEN")
+client = AsyncIOMotorClient(os.getenv("DBCLIENT"))
+BOT_TOKEN = os.getenv("BOTTOKEN")
 db = client["Boksun_db"]
 mute_logs_collection = db['mute_logs']
 user_roles_collection = db['user_roles']
@@ -34,9 +34,111 @@ class LogType(str, Enum):
     KICK = "추방"
     BAN = "사형"
 
+
+class MuteManager:
+    def __init__(self, db):
+        self.db = db
+        self.mute_collection = self.db['mute_tasks']
+
+    async def mute_user(self, member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime, muted_by: disnake.Member):
+        try:
+            mute_role = guild.get_role(MUTE_ROLE_ID)
+            if not mute_role:
+                print("재갈 역할을 찾을 수 없습니다.")
+                return
+
+            if mute_role in member.roles:
+                print(f"{member}는 이미 재갈 상태입니다.")
+                return
+
+            current_roles = [role.id for role in member.roles if role.id != guild.id and role.id != MUTE_ROLE_ID]
+            await user_roles_collection.update_one(
+                {'user_id': member.id},
+                {'$set': {'roles': current_roles}},
+                upsert=True
+            )
+
+            roles_to_remove = [role for role in member.roles if role.id != guild.id and role.id != MUTE_ROLE_ID]
+            await member.remove_roles(*roles_to_remove, reason="Mute")
+            await member.add_roles(mute_role)
+
+            # MongoDB에 뮤트 정보 저장
+            await self.mute_collection.update_one(
+                {'user_id': member.id},
+                {'$set': {
+                    'guild_id': guild.id,
+                    'end_time': end_time,
+                    'reason': reason,
+                    'muted_by': muted_by.id
+                }},
+                upsert=True
+            )
+
+            # 비동기적으로 unmute 스케줄링
+            asyncio.create_task(self.schedule_unmute(member, guild, end_time))
+
+        except disnake.Forbidden:
+            print(f"봇에게 {member}를 뮤트할 권한이 없습니다.")
+        except Exception as e:
+            print(f"{member} 뮤트 중 오류 발생: {str(e)}")
+
+    async def schedule_unmute(self, member: disnake.Member, guild: disnake.Guild, end_time: datetime):
+        await asyncio.sleep((end_time - datetime.now()).total_seconds())
+        await self.unmute_user(member, guild)
+
+    async def unmute_user(self, member: disnake.Member, guild: disnake.Guild) -> bool:
+        try:
+            mute_role = guild.get_role(MUTE_ROLE_ID)
+            if not mute_role:
+                print("뮤트 역할을 찾을 수 없습니다.")
+                return False
+
+            if mute_role not in member.roles:
+                print(f"{member}는 뮤트 상태가 아닙니다.")
+                return False
+
+            await member.remove_roles(mute_role)
+
+            user_roles = await user_roles_collection.find_one({'user_id': member.id})
+            if user_roles:
+                roles_to_add = [guild.get_role(role_id) for role_id in user_roles['roles'] if
+                                guild.get_role(role_id) is not None]
+                await member.add_roles(*roles_to_add)
+                await user_roles_collection.delete_one({'user_id': member.id})
+
+            # MongoDB에서 뮤트 정보 제거
+            await self.mute_collection.delete_one({'user_id': member.id})
+
+            print(f"{member}의 뮤트가 해제되었습니다.")
+            return True
+        except disnake.Forbidden:
+            print(f"봇에게 {member}의 뮤트를 해제할 권한이 없습니다.")
+        except Exception as e:
+            print(f"{member} 뮤트 해제 중 오류 발생: {str(e)}")
+        return False
+
+    async def load_mutes(self, bot):
+        current_time = datetime.now()
+        async for mute in self.mute_collection.find():
+            guild = bot.get_guild(mute['guild_id'])
+            if guild:
+                member = guild.get_member(mute['user_id'])
+                if member:
+                    if mute['end_time'] > current_time:
+                        asyncio.create_task(self.schedule_unmute(member, guild, mute['end_time']))
+                    else:
+                        await self.unmute_user(member, guild)
+
+
+# MuteManager 인스턴스 생성
+mute_manager = MuteManager(db)
+
+
 @bot.event
 async def on_ready():
     print("Bot is Ready!")
+    await mute_manager.load_mutes(bot)
+
 
 class LogPaginator(disnake.ui.View):
     def __init__(self, logs: List[Dict], category: str, timeout: float = 180.0):
@@ -81,12 +183,14 @@ class LogPaginator(disnake.ui.View):
         embed.set_footer(text=f"페이지 {self.page + 1}/{self.max_page + 1}")
         return embed
 
+
 def get_timestamp(entry: Dict) -> str:
     timestamp = entry.get('timestamp') or entry.get('warned_at') or entry.get('muted_at') or entry.get(
         'kicked_at') or entry.get('banned_at')
     if timestamp is None:
         return "날짜 정보 없음"
     return timestamp.strftime('%Y-%m-%d %H:%M:%S') if isinstance(timestamp, datetime) else str(timestamp)
+
 
 def create_all_log_embed(member: disnake.Member, warnings: List[Dict], mutes: List[Dict], kicks: List[Dict],
                          bans: List[Dict]) -> disnake.Embed:
@@ -111,6 +215,7 @@ def create_all_log_embed(member: disnake.Member, warnings: List[Dict], mutes: Li
 
     return embed
 
+
 async def add_kick_log(member: disnake.Member, reason: str, kicked_by: disnake.Member):
     await kick_logs_collection.insert_one({
         'user_id': member.id,
@@ -124,8 +229,10 @@ async def add_kick_log(member: disnake.Member, reason: str, kicked_by: disnake.M
         }
     })
 
-async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime, muted_by: disnake.Member):
-    await mute_logs_collection.insert_one({
+
+async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime,
+                       muted_by: disnake.Member, count_mute: bool = True):
+    mute_log = {
         'user_id': member.id,
         'username': member.name,
         'guild_id': guild.id,
@@ -136,9 +243,11 @@ async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str
             'id': muted_by.id,
             'name': muted_by.name
         },
-        'action': 'mute'
-    })
+        'action': 'mute' if count_mute else 'temp_mute'
+    }
+    await mute_logs_collection.insert_one(mute_log)
     return await get_punishment_counts(member.id)
+
 
 @bot.slash_command(name="경고", description="사용자에게 경고를 줍니다.")
 async def warn(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
@@ -166,34 +275,36 @@ async def warn(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
 
     await inter.followup.send(response)
 
+
 @bot.slash_command(name="경고삭제", description="사용자의 경고를 삭제합니다.")
 async def remove_warning(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
-        await inter.response.defer()
+    await inter.response.defer()
 
-        if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
-            await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
-            return
+    if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
+        return
 
-        warning_count = await get_warning_count(멤버.id)
-        if warning_count == 0:
-            await inter.followup.send(f"{멤버.mention}님은 경고가 없습니다.")
-            return
+    warning_count = await get_warning_count(멤버.id)
+    if warning_count == 0:
+        await inter.followup.send(f"{멤버.mention}님은 경고가 없습니다.")
+        return
 
-        await warnings_collection.insert_one({
-            'user_id': 멤버.id,
-            'username': 멤버.name,
-            'guild_id': inter.guild.id,
-            'reason': f"경고 삭제: {사유}",
-            'warned_at': datetime.now(),
-            'warned_by': {
-                'id': inter.author.id,
-                'name': inter.author.name
-            },
-            'action': 'remove'
-        })
+    await warnings_collection.insert_one({
+        'user_id': 멤버.id,
+        'username': 멤버.name,
+        'guild_id': inter.guild.id,
+        'reason': f"경고 삭제: {사유}",
+        'warned_at': datetime.now(),
+        'warned_by': {
+            'id': inter.author.id,
+            'name': inter.author.name
+        },
+        'action': 'remove'
+    })
 
-        new_warning_count = await get_warning_count(멤버.id)
-        await inter.followup.send(f"{멤버.mention}님의 경고를 1회 삭제했습니다. 사유: {사유}\n현재 경고 수: {new_warning_count}")
+    new_warning_count = await get_warning_count(멤버.id)
+    await inter.followup.send(f"{멤버.mention}님의 경고를 1회 삭제했습니다. 사유: {사유}\n현재 경고 수: {new_warning_count}")
+
 
 @bot.slash_command(name="재갈", description="특정 사용자를 뮤트합니다.")
 async def mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 뮤트시간: str, 사유: str):
@@ -226,6 +337,44 @@ async def mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
     except Exception as e:
         await inter.followup.send(f"뮤트 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
+
+@bot.slash_command(name="경고재갈", description="특정 사용자에게 경고를 주고 뮤트합니다 (뮤트 카운트 증가 없음).")
+async def warn_and_mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 뮤트시간: str, 사유: str):
+    await inter.response.defer()
+
+    if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
+        await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
+        return
+
+    try:
+        duration = parse_duration(뮤트시간)
+        if duration is None:
+            await inter.followup.send("재갈 시간 형식이 올바르지 않습니다. 예: 1h30m, 2d, 45m", ephemeral=True)
+            return
+
+        # 경고 추가
+        warning_count, mute_count = await add_warning(멤버, inter.guild, f"경고재갈: {사유}", inter.author)
+
+        # 경고 3회 누적 체크
+        if warning_count % 3 == 0:
+            duration = timedelta(days=1)  # 24시간 뮤트
+            end_time = datetime.now() + duration
+            await mute_user_with_reason(멤버, inter.guild, "경고 3회 누적", end_time, inter.author)
+            await add_mute_log(멤버, inter.guild, "경고 3회 누적", end_time, inter.author, count_mute=True)
+            response = f"{멤버.mention}님의 경고가 3회 누적되어 24시간 동안 재갈 처리되었습니다. 사유: 경고 3회 누적\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count + 1}"
+        else:
+            # 일반적인 경고재갈 처리
+            end_time = datetime.now() + duration
+            await mute_user_with_reason(멤버, inter.guild, 사유, end_time, inter.author)
+            await add_mute_log(멤버, inter.guild, 사유, end_time, inter.author, count_mute=False)
+            response = f"{멤버.mention}님에게 경고를 주고 {format_duration(duration)} 동안 재갈을 물렸습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
+
+        await inter.followup.send(response)
+
+    except Exception as e:
+        await inter.followup.send(f"경고재갈 처리 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
+
+
 @bot.slash_command(name="재갈풀기", description="사용자의 뮤트를 해제합니다.")
 async def unmute_command(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
     await inter.response.defer()
@@ -250,6 +399,7 @@ async def unmute_command(inter: disnake.ApplicationCommandInteraction, 멤버: d
         await inter.followup.send(f"{멤버.mention}님의 재갈을 풀었습니다. 사유: {사유}")
     else:
         await inter.followup.send(f"{멤버.mention}님은 재갈 상태가 아닙니다.")
+
 
 @bot.slash_command(name="추방", description="사용자를 서버에서 추방합니다.")
 async def kick(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 사유: str):
@@ -307,7 +457,8 @@ async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
 
 
 @bot.slash_command(name="로그", description="사용자의 처벌 기록을 확인합니다.")
-async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member, 종류: Literal["전체", "경고", "뮤트", "킥", "밴"] = "전체"):
+async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member,
+              종류: Literal["전체", "경고", "재갈", "추방", "사형"] = "전체"):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
@@ -337,8 +488,10 @@ async def log(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
             embed = view.create_embed()
             await inter.followup.send(embed=embed, view=view)
 
+
 async def get_log_entries(collection, user_id: int) -> List[Dict]:
     return await collection.find({'user_id': user_id}).sort('timestamp', -1).to_list(length=None)
+
 
 async def add_warning(member: disnake.Member, guild: disnake.Guild, reason: str, warned_by: disnake.Member):
     await warnings_collection.insert_one({
@@ -366,46 +519,26 @@ async def get_warning_count(user_id: int) -> int:
             count = max(0, count - 1)  # 경고 수가 음수가 되지 않도록 합니다
     return count
 
+
 async def get_mute_count(user_id: int) -> int:
     mutes = await mute_logs_collection.find({'user_id': user_id}).to_list(length=None)
     return sum(1 for m in mutes if m.get('action') == 'mute')
 
+
 async def get_kick_count(user_id: int) -> int:
     return await kick_logs_collection.count_documents({'user_id': user_id})
+
 
 async def get_punishment_counts(user_id: int) -> Tuple[int, int]:
     warnings = await warnings_collection.count_documents({'user_id': user_id, 'action': 'add'})
     mutes = await mute_logs_collection.count_documents({'user_id': user_id, 'action': 'mute'})
     return warnings, mutes
 
-async def mute_user_with_reason(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime, muted_by: disnake.Member):
-    try:
-        mute_role = guild.get_role(MUTE_ROLE_ID)
-        if not mute_role:
-            print("재갈 역할을 찾을 수 없습니다.")
-            return
 
-        if mute_role in member.roles:
-            print(f"{member}는 이미 재갈 상태입니다.")
-            return
+async def mute_user_with_reason(member: disnake.Member, guild: disnake.Guild, reason: str, end_time: datetime,
+                                muted_by: disnake.Member):
+    await mute_manager.mute_user(member, guild, reason, end_time, muted_by)
 
-        current_roles = [role.id for role in member.roles if role.id != guild.id and role.id != MUTE_ROLE_ID]
-        await user_roles_collection.update_one(
-            {'user_id': member.id},
-            {'$set': {'roles': current_roles}},
-            upsert=True
-        )
-
-        roles_to_remove = [role for role in member.roles if role.id != guild.id and role.id != MUTE_ROLE_ID]
-        await member.remove_roles(*roles_to_remove, reason="Mute")
-        await member.add_roles(mute_role)
-
-        bot.loop.create_task(schedule_unmute(member, guild, end_time)) # 코루틴
-
-    except disnake.Forbidden:
-        print(f"봇에게 {member}를 뮤트할 권한이 없습니다.")
-    except Exception as e:
-        print(f"{member} 뮤트 중 오류 발생: {str(e)}")
 
 async def schedule_unmute(member: disnake.Member, guild: disnake.Guild, end_time: datetime):
     await asyncio.sleep((end_time - datetime.now()).total_seconds())
@@ -413,32 +546,8 @@ async def schedule_unmute(member: disnake.Member, guild: disnake.Guild, end_time
 
 
 async def unmute_user(member: disnake.Member, guild: disnake.Guild) -> bool:
-    try:
-        mute_role = guild.get_role(MUTE_ROLE_ID)
-        if not mute_role:
-            print("뮤트 역할을 찾을 수 없습니다.")
-            return False
+    return await mute_manager.unmute_user(member, guild)
 
-        if mute_role not in member.roles:
-            print(f"{member}는 뮤트 상태가 아닙니다.")
-            return False
-
-        await member.remove_roles(mute_role)
-
-        user_roles = await user_roles_collection.find_one({'user_id': member.id})
-        if user_roles:
-            roles_to_add = [guild.get_role(role_id) for role_id in user_roles['roles'] if
-                            guild.get_role(role_id) is not None]
-            await member.add_roles(*roles_to_add)
-            await user_roles_collection.delete_one({'user_id': member.id})
-
-        print(f"{member}의 뮤트가 해제되었습니다.")
-        return True
-    except disnake.Forbidden:
-        print(f"봇에게 {member}의 뮤트를 해제할 권한이 없습니다.")
-    except Exception as e:
-        print(f"{member} 뮤트 해제 중 오류 발생: {str(e)}")
-    return False
 
 def parse_duration(duration_str: str) -> timedelta:
     total_seconds = 0
@@ -477,6 +586,7 @@ def format_duration(duration: timedelta) -> str:
 
     return " ".join(parts) if parts else "1분 미만"
 
+
 @bot.event
 async def on_slash_command_error(inter: disnake.ApplicationCommandInteraction, error: Exception):
     if isinstance(error, commands.errors.CommandInvokeError):
@@ -489,6 +599,7 @@ async def on_slash_command_error(inter: disnake.ApplicationCommandInteraction, e
         await inter.response.send_message(error_message, ephemeral=True)
     else:
         await inter.followup.send(error_message, ephemeral=True)
+
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
