@@ -434,32 +434,19 @@ async def kick(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
 
 
 @bot.slash_command(name="사형", description="사용자를 서버에서 차단합니다.")
-async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Member = None, 아이디: int = None, 사유: str = "사유 없음"):
+async def ban(inter: disnake.ApplicationCommandInteraction, 유저: disnake.User, 사유: str = "사유 없음"):
     await inter.response.defer()
 
     if not any(role.id in ADMIN_ROLE_ID for role in inter.author.roles):
         await inter.followup.send("이런건 내 주인님만 시킬 수 있다고.", ephemeral=True)
         return
 
-    if 멤버 is None and 아이디 is None:
-        await inter.followup.send("멤버를 선택하거나 아이디를 입력하세요.", ephemeral=True)
-        return
-
     try:
-        if 멤버:
-            user = 멤버
-            user_id = user.id
-            username = user.name
-        else:
-            user_id = int(아이디)
-            user = await bot.fetch_user(user_id)
-            username = user.name
-
-        await inter.guild.ban(user, reason=사유)
+        await inter.guild.ban(유저, reason=사유)
 
         await ban_logs_collection.insert_one({
-            'user_id': user.id,
-            'username': username,
+            'user_id': 유저.id,
+            'username': 유저.name,
             'guild_id': inter.guild.id,
             'reason': 사유,
             'banned_at': datetime.now(),
@@ -470,7 +457,7 @@ async def ban(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Memb
             'action': 'ban'
         })
 
-        await inter.followup.send(f"{username}(ID: {user_id})님을 사형했습니다. 사유: {사유}\n-# 사유 수정을 원한다면 차지철에게 DM")
+        await inter.followup.send(f"{유저.name}(ID: {유저.id})님을 사형했습니다. 사유: {사유}\n-# 사유 수정을 원한다면 차지철에게 DM")
     except ValueError:
         await inter.followup.send("올바른 사용자 ID를 입력해주세요.", ephemeral=True)
     except Exception as e:
