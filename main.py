@@ -1,3 +1,7 @@
+"""
+복순이 제작소
+"""
+
 import disnake
 from disnake.ext import commands
 import asyncio
@@ -247,6 +251,21 @@ async def add_mute_log(member: disnake.Member, guild: disnake.Guild, reason: str
     }
     await mute_logs_collection.insert_one(mute_log)
     return await get_punishment_counts(member.id)
+
+
+"""
+명령어 구간
+경고, 경고삭제, 재갈
+경고재갈, 재갈풀기
+추방, 사형, 사면, 로그
+
+
+아마도 필요할 예정인것들
+금지어 추가, 금지어 삭제, 금지어 목록
+
+수정할것들
+뮤트해제 시간 DB에 저장된 시간을 기준으로 작동하게 해서 봇이 중간에 꺼졌다가 다시 켜져도 아무런 문제 없이 작동하도록 설계하기
+"""
 
 
 @bot.slash_command(name="경고", description="사용자에게 경고를 줍니다.")
