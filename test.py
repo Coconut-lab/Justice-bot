@@ -14,8 +14,8 @@ from typing import Literal, List, Dict, Tuple
 
 load_dotenv()
 
-client = AsyncIOMotorClient(os.getenv("DBCLIENT"))
-BOT_TOKEN = os.getenv("BOTTOKEN")
+client = AsyncIOMotorClient(os.getenv("TESTDBCLIENT"))
+BOT_TOKEN = os.getenv("TESTBOTTOKEN")
 db = client["Boksun_db"]
 mute_logs_collection = db['mute_logs']
 user_roles_collection = db['user_roles']
@@ -26,8 +26,8 @@ ban_logs_collection = db['ban_logs']
 intents = disnake.Intents.all()
 bot = commands.InteractionBot(intents=intents)
 
-MUTE_ROLE_ID = 795147706237714433
-# MUTE_ROLE_ID = 1272135394669891621  # 테스트
+# MUTE_ROLE_ID = 795147706237714433
+MUTE_ROLE_ID = 1272135394669891621  # 테스트
 ADMIN_ROLE_ID = [789359681776648202, 1185934968636067921, 1101725365342306415]
 
 
@@ -287,7 +287,7 @@ async def warn(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
         return
 
     warning_count, mute_count = await add_warning(멤버, inter.guild, 사유, inter.author)
-    response = f"{멤버.mention}님에게 경고를 주었습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 재갈 횟수: {mute_count}"
+    response = f"{멤버.mention}님에게 경고를 주었습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
 
     if warning_count % 3 == 0:
         mute_duration = timedelta(days=1)
@@ -353,7 +353,7 @@ async def mute(inter: disnake.ApplicationCommandInteraction, 멤버: disnake.Mem
         await mute_user_with_reason(멤버, inter.guild, 사유, end_time, inter.author)
         warning_count, mute_count = await add_mute_log(멤버, inter.guild, 사유, end_time, inter.author)
 
-        response = f"{멤버.mention}님을 {format_duration(duration)} 동안 입을 막아놨습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 재갈 횟수: {mute_count}"
+        response = f"{멤버.mention}님을 {format_duration(duration)} 동안 입을 막아놨습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
 
         if mute_count % 3 == 0:
             kick_reason = "뮤트 3회 누적"
@@ -390,13 +390,13 @@ async def warn_and_mute(inter: disnake.ApplicationCommandInteraction, 멤버: di
             end_time = datetime.now() + duration
             await mute_user_with_reason(멤버, inter.guild, "경고 3회 누적", end_time, inter.author)
             await add_mute_log(멤버, inter.guild, "경고 3회 누적", end_time, inter.author, count_mute=True)
-            response = f"{멤버.mention}님의 경고가 3회 누적되어 24시간 동안 재갈 처리되었습니다. 사유: 경고 3회 누적\n현재 경고 횟수: {warning_count}, 재갈 횟수: {mute_count + 1}"
+            response = f"{멤버.mention}님의 경고가 3회 누적되어 24시간 동안 재갈 처리되었습니다. 사유: 경고 3회 누적\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count + 1}"
         else:
             # 일반적인 경고재갈 처리
             end_time = datetime.now() + duration
             await mute_user_with_reason(멤버, inter.guild, 사유, end_time, inter.author)
             await add_mute_log(멤버, inter.guild, 사유, end_time, inter.author, count_mute=False)
-            response = f"{멤버.mention}님에게 경고를 주고 {format_duration(duration)} 동안 재갈을 물렸습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 재갈 횟수: {mute_count}"
+            response = f"{멤버.mention}님에게 경고를 주고 {format_duration(duration)} 동안 재갈을 물렸습니다. 사유: {사유}\n현재 경고 횟수: {warning_count}, 뮤트 횟수: {mute_count}"
 
         await inter.followup.send(response)
 
