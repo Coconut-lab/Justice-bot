@@ -488,6 +488,7 @@ async def ban(inter: disnake.ApplicationCommandInteraction, 유저: disnake.User
         })
 
         await inter.followup.send(f"{유저.name}(ID: {유저.id})님을 사형했습니다. 사유: {사유}\n-# 사유 수정을 원한다면 차지철에게 DM")
+        await 유저.send(f"당신은 {inter.guild.name}에서 밴 되었습니다. 사유: {사유}")
     except ValueError:
         await inter.followup.send("올바른 사용자 ID를 입력해주세요.", ephemeral=True)
     except Exception as e:
